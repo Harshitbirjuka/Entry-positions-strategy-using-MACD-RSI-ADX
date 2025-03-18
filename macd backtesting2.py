@@ -47,25 +47,71 @@ def calculate_moving_averages(df, window_sma=50, window_ema=20):
     df["EMA"] = df["Close"].ewm(span=window_ema, adjust=False).mean()
     return df
 
+import pandas as pd
+import numpy as np
+
+def calculate_di(df, period=14):
+    """Calculate +DI, -DI, and ADX."""
+    df["High-Low"] = df["High"] - df["Low"]
+    df["High-PrevClose"] = np.abs(df["High"] - df["Close"].shift(1))
+    df["Low-PrevClose"] = np.abs(df["Low"] - df["Close"].shift(1))
+    
+    df["+DM"] = np.where((df["High"] - df["High"].shift(1)) > (df["Low"].shift(1) - df["Low"]), 
+                         np.maximum(df["High"] - df["High"].shift(1), 0), 0)
+    df["-DM"] = np.where((df["Low"].shift(1) - df["Low"]) > (df["High"] - df["High"].shift(1)), 
+                         np.maximum(df["Low"].shift(1) - df["Low"], 0), 0)
+    
+    df["TR"] = df[["High-Low", "High-PrevClose", "Low-PrevClose"]].max(axis=1)
+    
+    df["+DM_Smooth"] = df["+DM"].rolling(period).sum()
+    df["-DM_Smooth"] = df["-DM"].rolling(period).sum()
+    df["TR_Smooth"] = df["TR"].rolling(period).sum()
+    
+    df["+DI"] = 100 * (df["+DM_Smooth"] / df["TR_Smooth"])
+    df["-DI"] = 100 * (df["-DM_Smooth"] / df["TR_Smooth"])
+    
+    df["DX"] = 100 * (np.abs(df["+DI"] - df["-DI"]) / (df["+DI"] + df["-DI"]))
+    df["ADX"] = df["DX"].rolling(period).mean()
+
+    return df
+
 def calculate_indicators(df):
     df = calculate_macd(df)
     df = calculate_rsi(df)
     df = calculate_adx(df)
     df = calculate_moving_averages(df)
+    # Assuming df has 'High', 'Low', 'Close' columns
+    df = calculate_di(df) 
     return df
 
-def identify_trade_signals(df):
-    long_entries = df[(df["Close"] >= df["SMA"]) &
-                      (df["MACD_Line"].shift(1) <= df["Signal_Line"].shift(1)) &
-                      (df["MACD_Line"] >= df["Signal_Line"]) &
-                      (df["RSI"] >= 50) &
-                      (df["ADX"] >= 20) & (df["ADX"] <= 50)]
 
-    short_entries = df[(df["Close"] <= df["SMA"]) &
-                       (df["MACD_Line"].shift(1) >= df["Signal_Line"].shift(1)) &
-                       (df["MACD_Line"] <= df["Signal_Line"]) &
-                       (df["RSI"] <= 50) &
-                       (df["ADX"] >= 20) & (df["ADX"] < 50)]
+def identify_trade_signals(df):
+    # Add necessary technical indicators (pre-calculated in DataFrame)
+    df['SMA_20'] = df['Close'].rolling(window=20).mean()
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    df['Volume_MA_20'] = df['Volume'].rolling(window=20).mean()
+    df['MACD_Histogram'] = df['MACD_Line'] - df['Signal_Line']
+    
+    # Entry conditions for LONG positions
+    long_entries = df[
+        (df["Close"] < df["SMA"]) &  # Price above short-term SMA # Bullish SMA crossover
+        (df["MACD_Line"] > df["Signal_Line"]) & 
+        (df["ADX"] >= 20) & (df["ADX"] <= 50) &# MACD bullish crossover
+        (df["+DI"] > df["-DI"]) &
+        (df["RSI"].between(50, 70)) 
+         # Strong but not overbought
+
+    ]
+    
+    # Entry conditions for SHORT positions
+    short_entries = df[
+        (df["Close"] > df["SMA"]) &  # Price below short-term SMA  # Bearish SMA crossover
+        (df["MACD_Line"] < df["Signal_Line"]) &  
+        (df["ADX"] >= 20) & (df["ADX"] < 50) &
+        (df["RSI"].between(30, 45)) &
+        (df["-DI"] > df["+DI"]) 
+        # Weak but not oversold
+    ]
     
     return long_entries, short_entries
 
@@ -103,6 +149,5 @@ def main(ticker: str, interval: str = "1h", period: str = "1y"):
     return long_entries, short_entries
 
 if __name__ == "__main__":
-    stock_ticker = "ADANIPORTS.NS"
+    stock_ticker = "TCS.NS"
     main(stock_ticker)
-
